@@ -57,5 +57,3 @@ def test_infer_parameters():
     sim=model.simulate(values, true_array[:,0])
     assert RMSE(sim[:,0], true_array[:,1])<16
     assert RMSE(sim[:,1], true_array[:,2])<16
-#test_repressillator_simulation_class()
-test_infer_parameters()
