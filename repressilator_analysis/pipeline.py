@@ -21,276 +21,103 @@ from . import calibration
 from . import ode_inference
 
 
-def run_analysis(
-    intensity_dir: str = "images/intensity",
-    phase_dir: str = "images/phase",
-    docs_dir: str = "docs",
-    output_dir: str = "results",
-    nuclear_channel: str = "green",
-    cytoplasmic_channel: str = "red",
-    min_cell_area: int = 50,
-    n_mcmc_iterations: int = 1000,
-    save_intermediate: bool = True,
-) -> Dict:
+
+
+
+
+def extract_protein_numbers_from_tracks(
+    tracks,
+    intensity_dir: str,
+    phase_dir: str,
+    calibration_files: List[str],
+    weights: List[float],
+    track_labels: List[str] = None,
+    calibration_headers: int = 1,
+    output_dir: Optional[str] = None,
+) -> np.ndarray:
     """
-    Run the complete Repressilator analysis pipeline.
+    Extract protein molecule numbers from tracked cells across timepoints.
 
     Args:
+        tracks: Tuple of (tracks_dict, labeled_images) from track_cells_across_time.
+                tracks_dict maps track_id -> [(timepoint_idx, cell_label, (y, x)), ...]
+                labeled_images is a list of labeled cell images (one per timepoint)
         intensity_dir: Directory with fluorescence intensity images
         phase_dir: Directory with phase contrast images
-        docs_dir: Directory with calibration files
-        output_dir: Directory to save results
-        nuclear_channel: Color channel for nuclear fluorescence
-        cytoplasmic_channel: Color channel for cytoplasmic fluorescence
-        min_cell_area: Minimum cell area in pixels
-        n_mcmc_iterations: Number of MCMC iterations for parameter inference
-        save_intermediate: Save intermediate results
+        calibration_files: List of calibration file paths for each protein
+        weights: List of molecular weights (kDa) for each protein
+        track_labels: Labels for the proteins (e.g., ["n_intensity", "c_intensity"])
+        calibration_headers: Number of header rows to skip in calibration files
+        output_dir: Optional directory to save results
 
     Returns:
-        Dictionary containing all analysis results
+        3D numpy array with shape (timepoints, cells, proteins) containing molecule counts
     """
-    print("=" * 60)
-    print("REPRESSILATOR ANALYSIS PIPELINE")
-    print("=" * 60)
+    # Unpack tracks tuple
+    tracks_dict, labeled_images = tracks
 
-    # Create output directory
-    output_path = Path(output_dir)
-    output_path.mkdir(exist_ok=True)
-
-    # Step 1: Load images
-    print("\n[1/5] Loading time-series images...")
+    # Load images
     timepoints, intensity_images, phase_images = image_loader.load_timeseries(
         intensity_dir, phase_dir
     )
-    print(f"  Loaded {len(timepoints)} timepoints")
-    print(f"  Time range: {timepoints[0]:.0f} - {timepoints[-1]:.0f} minutes")
 
-    # Step 2: Segment cells and track across time
-    print("\n[2/5] Segmenting cells and tracking across timepoints...")
-    tracks, labeled_images = fluorescence_extraction.track_cells_across_time(
-        phase_images, min_cell_area
-    )
-    print(f"  Identified {len(tracks)} cell tracks")
+    n_timepoints = len(timepoints)
+    n_cells = len(tracks_dict)
+    n_proteins = len(calibration_files)
 
-    # Step 3: Extract fluorescence from segmented cells
-    print("\n[3/5] Extracting fluorescence from tracked cells...")
-    all_cell_data = []
+    # Initialize output array
+    protein_numbers = np.full((n_timepoints, n_cells, n_proteins), np.nan)
 
-    for t_idx, (t, intensity_img, labeled) in enumerate(
-        zip(timepoints, intensity_images, labeled_images)
-    ):
-        # Extract fluorescence
-        cell_fluorescence = fluorescence_extraction.extract_nuclear_cytoplasmic(
-            intensity_img, labeled, nuclear_channel, cytoplasmic_channel
-        )
+    # Load calibrations
+    calibrations = []
+    for cal_file, weight in zip(calibration_files, weights):
+        cal = calibration.ProteinCalibration(cal_file, weight, header=calibration_headers)
+        calibrations.append(cal)
 
-        # Get cell IDs from labeled image
-        cell_ids = np.unique(labeled)
+    # Build a mapping from (timepoint, cell_label) to track_id
+    timepoint_cell_to_track = {}
+    for track_id, track_data in tracks_dict.items():
+        for tp_idx, cell_label, centroid in track_data:
+            timepoint_cell_to_track[(tp_idx, cell_label)] = track_id
+
+    # Process each timepoint
+    for t_idx, (intensity_img, labeled_img) in enumerate(zip(intensity_images, labeled_images)):
+        # Get unique cell IDs in this frame
+        cell_ids = np.unique(labeled_img)
         cell_ids = cell_ids[cell_ids > 0]
 
-        # Store data
-        for cell_id, fluor_data in zip(cell_ids, cell_fluorescence):
-            all_cell_data.append({
-                'timepoint': t,
-                'timepoint_idx': t_idx,
-                'cell_id': int(cell_id),
-                'nuclear_pixels': fluor_data['nuclear'],
-                'cytoplasmic_pixels': fluor_data['cytoplasmic'],
-            })
+        # Extract fluorescence for each cell
+        for cell_id in cell_ids:
+            # Get track_id for this cell
+            if (t_idx, int(cell_id)) not in timepoint_cell_to_track:
+                continue
+            track_id = timepoint_cell_to_track[(t_idx, int(cell_id))]
 
-    print(f"  Extracted fluorescence from {len(all_cell_data)} cell observations")
+            # Get cell mask
+            cell_mask = labeled_img == cell_id
 
-    if save_intermediate:
-        df_cells = pd.DataFrame(all_cell_data)
-        df_cells.to_csv(output_path / "raw_fluorescence.csv", index=False)
-        print(f"  Saved raw fluorescence to {output_path / 'raw_fluorescence.csv'}")
+            # Extract fluorescence for each protein (channel)
+            # Assuming nuclear protein is in green channel (channel 1)
+            # and cytoplasmic protein is in red channel (channel 0)
+            if intensity_img.ndim == 3:
+                # Multi-channel image
+                nuclear_pixels = intensity_img[:, :, 1][cell_mask]  # Green channel
+                cytoplasmic_pixels = intensity_img[:, :, 0][cell_mask]  # Red channel
+            else:
+                # Single channel - use same for both
+                pixels = intensity_img[cell_mask]
+                nuclear_pixels = pixels
+                cytoplasmic_pixels = pixels
 
-    # Step 4: Convert fluorescence to protein quantities
-    print("\n[4/5] Converting fluorescence to protein quantities...")
-    calibrations = calibration.load_calibrations(docs_dir)
-    print(f"  Loaded {len(calibrations)} calibration curves")
+            # Calculate mean intensity for each protein
+            intensities = [
+                np.mean(nuclear_pixels),
+                np.mean(cytoplasmic_pixels)
+            ]
 
-    # Molecular weights from calibration file names
-    molecular_weights = {
-        'nuclear': 66,  # kDa
-        'cytoplasmic': 53,  # kDa
-    }
+            # Convert to molecule counts using calibrations
+            for protein_idx, (intensity, cal) in enumerate(zip(intensities, calibrations)):
+                molecules = cal.pixel_intensities_to_molecules(intensity)
+                protein_numbers[t_idx, track_id, protein_idx] = molecules
 
-    # Convert all measurements
-    for data_point in all_cell_data:
-        fluor_dict = {
-            'nuclear': data_point['nuclear_pixels'],
-            'cytoplasmic': data_point['cytoplasmic_pixels'],
-        }
-
-        # Convert to mass
-        mass_dict = calibration.convert_cell_fluorescence_to_mass(fluor_dict, calibrations)
-        data_point['nuclear_mass_ng'] = mass_dict.get('nuclear', np.nan)
-        data_point['cytoplasmic_mass_ng'] = mass_dict.get('cytoplasmic', np.nan)
-
-        # Convert to molecules
-        mol_dict = calibration.convert_cell_fluorescence_to_molecules(
-            fluor_dict, calibrations, molecular_weights
-        )
-        data_point['nuclear_molecules'] = mol_dict.get('nuclear', np.nan)
-        data_point['cytoplasmic_molecules'] = mol_dict.get('cytoplasmic', np.nan)
-
-    if save_intermediate:
-        df_converted = pd.DataFrame(all_cell_data)
-        df_converted.to_csv(output_path / "protein_quantities.csv", index=False)
-        print(f"  Saved protein quantities to {output_path / 'protein_quantities.csv'}")
-
-    # Step 5: Parameter inference for each cell track
-    print("\n[5/5] Running parameter inference (this may take a while)...")
-    inference_results = {}
-
-    for track_id, track in tracks.items():
-        if len(track) < 10:  # Skip short tracks
-            continue
-
-        print(f"\n  Processing track {track_id} ({len(track)} timepoints)...")
-
-        # Collect data for this track
-        track_times = []
-        track_nuclear = []
-        track_cytoplasmic = []
-
-        for t_idx, cell_id in track:
-            # Find corresponding data
-            for data_point in all_cell_data:
-                if (data_point['timepoint_idx'] == t_idx and
-                    data_point['cell_id'] == cell_id):
-                    track_times.append(data_point['timepoint'])
-                    track_nuclear.append(data_point['nuclear_molecules'])
-                    track_cytoplasmic.append(data_point['cytoplasmic_molecules'])
-                    break
-
-        # Check for valid data
-        if len(track_times) < 10 or np.any(np.isnan(track_nuclear + track_cytoplasmic)):
-            print(f"    Skipping track {track_id}: insufficient valid data")
-            continue
-
-        # Run inference
-        try:
-            cell_data = {
-                'nuclear': track_nuclear,
-                'cytoplasmic': track_cytoplasmic,
-            }
-
-            result = ode_inference.run_inference_for_cell(
-                np.array(track_times),
-                cell_data,
-                n_iterations=n_mcmc_iterations,
-            )
-
-            inference_results[track_id] = result
-
-            # Save individual track results
-            if save_intermediate:
-                track_file = output_path / f"track_{track_id}_inference.pkl"
-                with open(track_file, 'wb') as f:
-                    pickle.dump(result, f)
-
-        except Exception as e:
-            print(f"    Error in inference for track {track_id}: {e}")
-
-    print(f"\n  Successfully inferred parameters for {len(inference_results)} cells")
-
-    # Save summary results
-    print("\n[6/6] Saving results...")
-    results = {
-        'timepoints': timepoints,
-        'all_cell_data': all_cell_data,
-        'tracks': tracks,
-        'inference_results': inference_results,
-        'calibrations': calibrations,
-    }
-
-    with open(output_path / "complete_results.pkl", 'wb') as f:
-        pickle.dump(results, f)
-
-    print(f"\n  Complete results saved to {output_path / 'complete_results.pkl'}")
-
-    # Generate summary plots
-    print("\n[7/7] Generating summary plots...")
-    generate_summary_plots(results, output_path)
-
-    print("\n" + "=" * 60)
-    print("ANALYSIS COMPLETE")
-    print("=" * 60)
-
-    return results
-
-
-def generate_summary_plots(results: Dict, output_dir: Path):
-    """Generate summary plots for the analysis results."""
-
-    # Plot 1: Example cell tracks
-    fig, axes = plt.subplots(2, 1, figsize=(12, 8))
-
-    df = pd.DataFrame(results['all_cell_data'])
-    tracks = results['tracks']
-
-    # Plot first few tracks
-    for i, (track_id, track) in enumerate(list(tracks.items())[:5]):
-        track_data = []
-        for t_idx, cell_id in track:
-            for data_point in results['all_cell_data']:
-                if (data_point['timepoint_idx'] == t_idx and
-                    data_point['cell_id'] == cell_id):
-                    track_data.append(data_point)
-                    break
-
-        if len(track_data) > 0:
-            track_df = pd.DataFrame(track_data)
-            axes[0].plot(track_df['timepoint'], track_df['nuclear_molecules'],
-                        label=f'Track {track_id}', alpha=0.7)
-            axes[1].plot(track_df['timepoint'], track_df['cytoplasmic_molecules'],
-                        label=f'Track {track_id}', alpha=0.7)
-
-    axes[0].set_xlabel('Time (minutes)')
-    axes[0].set_ylabel('Nuclear Repressor (molecules)')
-    axes[0].legend()
-    axes[0].grid(True, alpha=0.3)
-
-    axes[1].set_xlabel('Time (minutes)')
-    axes[1].set_ylabel('Cytoplasmic Repressor (molecules)')
-    axes[1].legend()
-    axes[1].grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    plt.savefig(output_dir / "example_tracks.png", dpi=150)
-    plt.close()
-
-    print(f"  Saved example_tracks.png")
-
-    # Plot 2: Parameter distributions
-    if len(results['inference_results']) > 0:
-        param_names = ['alpha', 'alpha0', 'beta', 'n', 'gamma_m', 'gamma_p']
-        all_params = []
-
-        for track_id, result in results['inference_results'].items():
-            all_params.append(result['parameter_means'][:-1])  # Exclude sigma
-
-        all_params = np.array(all_params)
-
-        fig, axes = plt.subplots(2, 3, figsize=(15, 8))
-        axes = axes.flatten()
-
-        for i, name in enumerate(param_names):
-            axes[i].hist(all_params[:, i], bins=20, alpha=0.7, edgecolor='black')
-            axes[i].set_xlabel(name)
-            axes[i].set_ylabel('Count')
-            axes[i].set_title(f'{name} distribution')
-            axes[i].grid(True, alpha=0.3)
-
-        plt.tight_layout()
-        plt.savefig(output_dir / "parameter_distributions.png", dpi=150)
-        plt.close()
-
-        print(f"  Saved parameter_distributions.png")
-
-
-if __name__ == "__main__":
-    # Run the pipeline with default parameters
-    results = run_analysis()
+    return protein_numbers

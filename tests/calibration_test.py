@@ -19,4 +19,3 @@ def test_calibration():
         if any([x<0 for x in calculated_molecules]):
             raise ValueError("Negative molecules in pixel calculation")
         assert np.mean(np.abs(calculated_molecules-true_amounts))<170
-test_calibration()
