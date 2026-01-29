@@ -25,6 +25,94 @@ from . import ode_inference
 
 
 
+def full_analysis(
+    intensity_dir: str,
+    phase_dir: str,
+    calibration_dict: Dict,
+    cell_ids: Optional[List[int]] = None,
+    min_cell_area: int = 5,
+    method: str = 'differential_evolution',
+) -> tuple:
+    """
+    Run the complete Repressilator analysis pipeline.
+
+    Args:
+        intensity_dir: Directory containing fluorescence intensity images
+        phase_dir: Directory containing phase contrast images
+        calibration_dict: Dictionary with keys:
+            - "files": List of calibration file paths
+            - "weights": List of molecular weights (kDa)
+            - "headers": Number of header rows in calibration files
+        cell_ids: Optional list of specific cell IDs to analyze (defaults to all)
+        min_cell_area: Minimum cell area for segmentation
+        method: Optimization method for ODE inference
+
+    Returns:
+        Tuple of (tracks, protein_numbers, parameters) where:
+        - tracks: List of dicts per timepoint with cell_id and centre
+        - protein_numbers: 3D array (timepoints, cells, proteins)
+        - parameters: Dict mapping cell_id -> parameter array
+    """
+    # Load images
+    timepoints, intensity_images, phase_images = image_loader.load_timeseries(
+        intensity_dir, phase_dir
+    )
+
+    # Track cells
+    tracks_dict, labeled_images = fluorescence_extraction.track_cells_across_time(
+        phase_images, min_cell_area
+    )
+
+    # Convert tracks to list format for test compatibility
+    tracks_list = [[] for _ in range(len(phase_images))]
+    for track_id, track_data in tracks_dict.items():
+        for tp_idx, cell_label, centroid in track_data:
+            tracks_list[tp_idx].append({
+                "cell_id": int(track_id),
+                "centre": list(centroid)
+            })
+
+    # Extract protein numbers
+    protein_numbers = extract_protein_numbers_from_tracks(
+        (tracks_dict, labeled_images),
+        intensity_dir,
+        phase_dir,
+        calibration_dict["files"],
+        calibration_dict["weights"],
+        track_labels=["n_intensity", "c_intensity"],
+        calibration_headers=calibration_dict["headers"],
+    )
+
+    # Run ODE inference for specified cells
+    parameters = {}
+
+    # If no cell_ids specified, analyze all cells
+    if cell_ids is None:
+        cell_ids = list(tracks_dict.keys())
+
+    for cell_id in cell_ids:
+        print(f"\nInferring parameters for cell {cell_id}...")
+
+        # Extract time series for this cell
+        cell_observations = protein_numbers[:, cell_id, :]
+
+        # Check for NaN values
+        if np.any(np.isnan(cell_observations)):
+            print(f"Warning: Cell {cell_id} has missing data, skipping...")
+            continue
+
+        # Run inference
+        best_params = ode_inference.infer_parameters(
+            timepoints,
+            cell_observations,
+            method=method
+        )
+
+        parameters[cell_id] = best_params
+
+    return tracks_list, protein_numbers, parameters
+
+
 def extract_protein_numbers_from_tracks(
     tracks,
     intensity_dir: str,

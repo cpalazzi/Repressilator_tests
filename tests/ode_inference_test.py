@@ -25,11 +25,11 @@ def test_repressillator_simulation_class():
 def test_infer_parameters():
     testdata_path = os.path.join(os.path.dirname(__file__), "testdata", "F_vs_amount.txt")
     all_true_data= np.loadtxt(testdata_path)
-    minutes=list(range(0, 2160, 15))
+    minutes=np.array(range(0, 2160, 15))*60
     true_array=np.zeros((len(minutes), 3))
     counter=0
     for j in range(0, len(all_true_data)):
-        if all_true_data[j,7]==0:
+        if all_true_data[j,7]==1:
             true_array[counter,1:]=all_true_data[j,[1,4]]-50
             true_array[counter, 0]=minutes[counter]*60
             counter+=1
