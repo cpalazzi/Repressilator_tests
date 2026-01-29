@@ -1,3 +1,10 @@
+"""
+Tests for cell tracking and fluorescence extraction functionality.
+
+This module tests cell segmentation, tracking across time points, and
+fluorescence intensity extraction from microscopy images.
+"""
+
 import unittest
 from unittest.mock import patch
 import pytest
@@ -8,7 +15,26 @@ import matplotlib.pyplot as plt
 from test_utils import map_true_indices_to_tracks
 from scipy.optimize import linear_sum_assignment
 
+
 def test_track_cells():
+    """
+    Test cell segmentation, tracking, and fluorescence extraction across time.
+
+    This comprehensive test validates:
+    1. Cell segmentation from phase contrast images (80 cells per frame)
+    2. Cell tracking consistency across multiple timepoints
+    3. Position accuracy of tracked cell centroids (< 7 pixels error)
+    4. Fluorescence extraction accuracy for nuclear and cytoplasmic channels
+
+    Uses reference data to verify that:
+    - All 80 cells are detected in each frame
+    - Cell identities are maintained across timepoints
+    - Cell positions match ground truth within 7 pixels
+    - Fluorescence values match ground truth (mean < 5, std < 6)
+
+    Raises:
+        ValueError: If cell count, position, or fluorescence extraction fails validation
+    """
     intensity_dir = os.path.join(os.path.dirname(__file__), os.pardir, "images", "intensity")
     phase_dir = os.path.join(os.path.dirname(__file__), os.pardir, "images", "phase")
 

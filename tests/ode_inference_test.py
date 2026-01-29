@@ -1,3 +1,11 @@
+"""
+Tests for ODE inference and Repressilator model simulation.
+
+This module tests the RepressilatorModel class and parameter inference functions
+to ensure accurate simulation of the repressilator genetic circuit and reliable
+parameter estimation from time-series data.
+"""
+
 import unittest
 from unittest.mock import patch
 import pytest
@@ -7,9 +15,34 @@ import repressilator_analysis as ra
 import matplotlib.pyplot as plt
 import json
 import pints
+
+
 def RMSE(y, y_data):
+    """
+    Calculate the Root Mean Square Error between two arrays.
+
+    Args:
+        y: First array of predicted values
+        y_data: Second array of actual values
+
+    Returns:
+        Root mean square error as a float
+    """
     return np.sqrt(np.mean(np.square(np.subtract(y, y_data))))
+
+
 def test_repressillator_simulation_class():
+    """
+    Test RepressilatorModel simulation accuracy against reference data.
+
+    Loads test simulation data and known parameters, then validates that
+    the RepressilatorModel.simulate() method reproduces the expected
+    protein concentrations for both nuclear and cytosolic repressors.
+
+    Asserts:
+        - RMSE for nuclear protein < 26 molecules
+        - RMSE for cytosolic protein < 26 molecules
+    """
     testdata_path = os.path.join(os.path.dirname(__file__), "testdata", "protein_numbers")
     test_simulation= np.loadtxt(os.path.join(testdata_path, "simulation_001.txt"))
     test_time_seconds=test_simulation[:,0]
@@ -22,7 +55,23 @@ def test_repressillator_simulation_class():
     values=simclass.simulate(sim_values, test_time_seconds)
     assert RMSE(values[:,0], test_nuclear_protein)<26
     assert RMSE(values[:,1], test_cytosol_protein) <26
+
+
 def test_infer_parameters():
+    """
+    Test parameter inference from time-series protein data.
+
+    Loads test time-series data for a single cell and validates that the
+    infer_parameters() function correctly estimates Repressilator model
+    parameters (alpha, alpha0, beta, hill, mrna_half_life, p_half_life).
+    Compares inferred parameters against known values and validates that
+    simulations using inferred parameters match observed data.
+
+    Asserts:
+        - RMSE for nuclear protein simulation < 16 molecules
+        - RMSE for cytosolic protein simulation < 16 molecules
+        - Parameter estimates within reasonable error bounds
+    """
     testdata_path = os.path.join(os.path.dirname(__file__), "testdata", "F_vs_amount.txt")
     all_true_data= np.loadtxt(testdata_path)
     minutes=np.array(range(0, 2160, 15))*60

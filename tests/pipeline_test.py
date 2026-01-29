@@ -1,3 +1,10 @@
+"""
+Tests for the complete analysis pipeline.
+
+This module tests the full Repressilator analysis workflow including
+cell tracking, protein number extraction, and parameter inference.
+"""
+
 import unittest
 from unittest.mock import patch
 import pytest
@@ -7,7 +14,21 @@ import repressilator_analysis as ra
 import matplotlib.pyplot as plt
 import json
 from test_utils import map_true_indices_to_tracks
+
+
 def test_extraction():
+    """
+    Test protein molecule number extraction from tracked cells.
+
+    Validates that extract_protein_numbers_from_tracks() correctly:
+    1. Tracks 80 cells across all timepoints
+    2. Extracts fluorescence intensities
+    3. Converts intensities to molecule counts using calibration
+    4. Produces values within 200 molecules RMSE of ground truth
+
+    Asserts:
+        - Mean RMSE across all cells and proteins < 200 molecules
+    """
     intensity_dir = os.path.join(os.path.dirname(__file__), os.pardir, "images", "intensity")
     phase_dir = os.path.join(os.path.dirname(__file__), os.pardir, "images", "phase")
     calibrant_names=[ "Nuclear repressor 1 (66 kDa) calibration.txt","Cytosolic repressor (53 kDa) calibration.txt"]
@@ -39,8 +60,9 @@ def test_extraction():
     calibrant_files=[os.path.join(os.path.dirname(__file__), os.pardir, "docs", x) for x in calibrant_names]
     recovered_numbers=ra.pipeline.extract_protein_numbers_from_tracks(
         extraction_arg,
-        timepoints, intensity_images, phase_images, calibration_files=calibrant_files,weights=weights,
-        track_labels=["n_intensity", "c_intensity"],calibration_headers=1,)
+        timepoints, intensity_images, phase_images,
+        calibration_dict={"files": calibrant_files, "weights": weights, "headers": 1},
+        track_labels=["n_intensity", "c_intensity"],)
     protein_values=actual_data[:, [1, 4]]
     errors=[]
     for i in range(0,80):
@@ -55,7 +77,28 @@ def test_extraction():
             error=ra.utils.RMSE(calculated_values, actual_values[0])
             errors.append(error)
     assert np.mean(error)<200
+
+
 def test_full_pipeline():
+    """
+    Test the complete end-to-end Repressilator analysis pipeline.
+
+    This integration test validates the full_analysis() function by:
+    1. Loading intensity and phase images
+    2. Segmenting and tracking cells
+    3. Extracting protein molecule numbers
+    4. Inferring ODE parameters for specific cells
+
+    Tests parameter inference accuracy by comparing inferred parameters
+    against known ground truth values for cells [1, 3, 5] and validating
+    that simulations using inferred parameters accurately reproduce the
+    observed protein time series.
+
+    Asserts:
+        - RMSE for nuclear protein < 160 molecules per cell
+        - RMSE for cytosolic protein < 160 molecules per cell
+        - Parameter estimates within reasonable error bounds
+    """
     intensity_dir = os.path.join(os.path.dirname(__file__), os.pardir, "images", "intensity")
     phase_dir = os.path.join(os.path.dirname(__file__), os.pardir, "images", "phase")
     calibrant_names=[ "Nuclear repressor 1 (66 kDa) calibration.txt","Cytosolic repressor (53 kDa) calibration.txt"]
@@ -107,7 +150,3 @@ def test_full_pipeline():
         sim=model.simulate(parameters[target_cell_id], timepoints)
         assert ra.utils.RMSE(sim[:,0], true_array[:,0]) <160
         assert ra.utils.RMSE(sim[:,1], true_array[:,1]) <160
-
-
-    
-test_full_pipeline()

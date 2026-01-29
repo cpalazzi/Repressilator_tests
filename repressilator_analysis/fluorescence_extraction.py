@@ -97,22 +97,22 @@ def extract_nuclear_cytoplasmic(
     labeled_cells: np.ndarray,
     nuclear_channel: str = 'green',
     cytoplasmic_channel: str = 'red',
-) -> Dict[int, Dict[str, float]]:
+) -> List[Dict[str, float]]:
     """
     Extract nuclear and cytoplasmic fluorescence for each cell.
 
-    This assumes:
-    - Nuclear repressor is in one fluorescence channel
-    - Cytosolic repressor is in another fluorescence channel
+    This function extracts mean fluorescence intensities from two separate
+    channels representing nuclear and cytoplasmic compartments.
 
     Args:
         intensity_image: RGB fluorescence image
         labeled_cells: Labeled cell image from segmentation
-        nuclear_channel: Color channel for nuclear fluorescence
-        cytoplasmic_channel: Color channel for cytoplasmic fluorescence
+        nuclear_channel: Color channel for nuclear fluorescence (default: 'green')
+        cytoplasmic_channel: Color channel for cytoplasmic fluorescence (default: 'red')
 
     Returns:
-        Dictionary mapping cell_id -> {'nuclear': intensity, 'cytoplasmic': intensity}
+        List of dictionaries with keys 'nuclear' and 'cytoplasmic' containing
+        mean fluorescence intensities for each cell
     """
     channel_map = {'red': 0, 'green': 1, 'blue': 2}
 

@@ -34,24 +34,31 @@ def full_analysis(
     method: str = 'differential_evolution',
 ) -> tuple:
     """
-    Run the complete Repressilator analysis pipeline.
+    Run the complete Repressilator analysis pipeline from images to parameters.
+
+    This function orchestrates the entire analysis workflow:
+    1. Loads time-series fluorescence and phase contrast images
+    2. Segments and tracks cells across all timepoints
+    3. Extracts fluorescence intensities and converts to molecule counts
+    4. Infers Repressilator ODE parameters for specified cells
 
     Args:
         intensity_dir: Directory containing fluorescence intensity images
         phase_dir: Directory containing phase contrast images
         calibration_dict: Dictionary with keys:
-            - "files": List of calibration file paths
-            - "weights": List of molecular weights (kDa)
-            - "headers": Number of header rows in calibration files
-        cell_ids: Optional list of specific cell IDs to analyze (defaults to all)
-        min_cell_area: Minimum cell area for segmentation
-        method: Optimization method for ODE inference
+            - "files": List of calibration file paths (one per protein/channel)
+            - "weights": List of molecular weights in kDa (one per protein)
+            - "headers": Number of header rows to skip in calibration files
+        cell_ids: Optional list of specific cell IDs to analyze (defaults to all tracked cells)
+        min_cell_area: Minimum cell area in pixels for segmentation (default: 5)
+        method: Optimization method for parameter inference ('differential_evolution' or 'least_squares')
 
     Returns:
         Tuple of (tracks, protein_numbers, parameters) where:
-        - tracks: List of dicts per timepoint with cell_id and centre
-        - protein_numbers: 3D array (timepoints, cells, proteins)
-        - parameters: Dict mapping cell_id -> parameter array
+        - tracks: List of dicts per timepoint, each dict has 'cell_id' and 'centre' [y, x]
+        - protein_numbers: 3D numpy array of shape (timepoints, cells, proteins) with molecule counts
+        - parameters: Dict mapping cell_id -> array of best-fit parameters
+          [alpha, alpha0, beta, hill, mrna_half_life, p_half_life]
     """
     # Load images
     timepoints, intensity_images, phase_images = image_loader.load_timeseries(
@@ -75,12 +82,11 @@ def full_analysis(
     # Extract protein numbers
     protein_numbers = extract_protein_numbers_from_tracks(
         (tracks_dict, labeled_images),
-        intensity_dir,
-        phase_dir,
-        calibration_dict["files"],
-        calibration_dict["weights"],
+        timepoints,
+        intensity_images,
+        phase_images,
+        calibration_dict=calibration_dict,
         track_labels=["n_intensity", "c_intensity"],
-        calibration_headers=calibration_dict["headers"],
     )
 
     # Run ODE inference for specified cells
@@ -115,39 +121,56 @@ def full_analysis(
 
 def extract_protein_numbers_from_tracks(
     tracks,
-    intensity_dir: str,
-    phase_dir: str,
-    calibration_files: List[str],
-    weights: List[float],
+    timepoints: np.ndarray,
+    intensity_images: List[np.ndarray],
+    phase_images: List[np.ndarray],
+    calibration_dict: Dict = None,
+    calibration_files: List[str] = None,
+    weights: List[float] = None,
     track_labels: List[str] = None,
     calibration_headers: int = 1,
     output_dir: Optional[str] = None,
 ) -> np.ndarray:
     """
-    Extract protein molecule numbers from tracked cells across timepoints.
+    Extract protein molecule numbers from tracked cells across all timepoints.
+
+    This function takes cell tracking data and fluorescence images, extracts
+    mean pixel intensities for each cell and channel, then converts to molecule
+    counts using calibration curves.
 
     Args:
-        tracks: Tuple of (tracks_dict, labeled_images) from track_cells_across_time.
-                tracks_dict maps track_id -> [(timepoint_idx, cell_label, (y, x)), ...]
-                labeled_images is a list of labeled cell images (one per timepoint)
-        intensity_dir: Directory with fluorescence intensity images
-        phase_dir: Directory with phase contrast images
-        calibration_files: List of calibration file paths for each protein
-        weights: List of molecular weights (kDa) for each protein
-        track_labels: Labels for the proteins (e.g., ["n_intensity", "c_intensity"])
-        calibration_headers: Number of header rows to skip in calibration files
-        output_dir: Optional directory to save results
+        tracks: Tuple of (tracks_dict, labeled_images) from track_cells_across_time where:
+                - tracks_dict maps track_id -> [(timepoint_idx, cell_label, (y, x)), ...]
+                - labeled_images is a list of labeled cell segmentation masks (one per timepoint)
+        timepoints: Array of timepoints in minutes
+        intensity_images: List of fluorescence intensity image arrays
+        phase_images: List of phase contrast image arrays
+        calibration_dict: Dictionary with keys "files", "weights", and "headers" for calibration.
+                          If provided, overrides individual calibration parameters.
+        calibration_files: List of calibration file paths (one per protein/channel).
+                          Ignored if calibration_dict is provided.
+        weights: List of molecular weights in kDa (one per protein, same order as calibration_files).
+                Ignored if calibration_dict is provided.
+        track_labels: Optional labels for proteins (e.g., ["n_intensity", "c_intensity"])
+        calibration_headers: Number of header rows to skip in calibration files (default: 1).
+                            Ignored if calibration_dict is provided.
+        output_dir: Optional directory path to save results (currently unused)
 
     Returns:
-        3D numpy array with shape (timepoints, cells, proteins) containing molecule counts
+        3D numpy array with shape (n_timepoints, n_cells, n_proteins) containing
+        molecule counts for each cell at each timepoint. Missing/untracked cells
+        have NaN values.
     """
+    # Handle calibration dictionary or individual parameters
+    if calibration_dict is not None:
+        calibration_files = calibration_dict["files"]
+        weights = calibration_dict["weights"]
+        calibration_headers = calibration_dict["headers"]
+    elif calibration_files is None or weights is None:
+        raise ValueError("Must provide either calibration_dict or both calibration_files and weights")
+
     # Unpack tracks tuple
     tracks_dict, labeled_images = tracks
-
-    # Load images
-    timepoints, intensity_images, phase_images = image_loader.load_timeseries(
-        intensity_dir, phase_dir
-    )
 
     n_timepoints = len(timepoints)
     n_cells = len(tracks_dict)

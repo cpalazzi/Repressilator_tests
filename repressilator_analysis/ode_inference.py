@@ -184,15 +184,26 @@ def run_inference_for_cell(
     method: str = 'differential_evolution',
 ) -> Dict[str, any]:
     """
-    Run parameter inference for a single cell's time-series data.
+    Run ODE parameter inference for a single cell's time-series data.
+
+    This function prepares observation data from a single cell and runs
+    parameter optimization to find the best-fit Repressilator parameters.
 
     Args:
-        times: Time points in minutes
-        cell_data: Dictionary with 'nuclear' and 'cytoplasmic' protein concentrations
+        times: Array of time points in minutes
+        cell_data: Dictionary with keys 'nuclear' and 'cytoplasmic' containing
+                   lists/arrays of protein concentration measurements over time
         method: Optimization method ('differential_evolution' or 'least_squares')
 
     Returns:
-        Dictionary with inference results
+        Dictionary with keys:
+        - 'times': Input time array
+        - 'observations': 2D array of shape (n_times, 2) with nuclear and cytoplasmic data
+        - 'best_fit_parameters': Array of 6 fitted parameters
+        - 'parameter_names': List of parameter names
+
+    Raises:
+        ValueError: If cell_data is missing 'nuclear' or 'cytoplasmic' measurements
     """
     # Prepare observations
     nuclear = np.array(cell_data.get('nuclear', []))
