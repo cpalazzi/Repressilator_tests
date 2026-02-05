@@ -52,6 +52,7 @@ def test_track_cells():
     }
 
     tracks=ra.fluorescence_extraction.track_cells_across_time(test_images["phase_images"], 5)
+    extraction_tracks=tracks
     if len(tracks)==2:
         labelled_images=tracks[1]
         new_tracks=[[] for x in range(0, len(test_images["phase_images"]))]
@@ -61,7 +62,7 @@ def test_track_cells():
                     if elem[0]==i:
                         new_tracks[i].append({"cell_id":int(key), "centre":list(elem[2])})
         tracks=new_tracks
-
+        extraction_tracks=labelled_images
     actual_data=test_images["data"]
     intensity_images = test_images['intensity_images']
 
@@ -96,7 +97,7 @@ def test_track_cells():
         # Test fluorescence extraction
         results = ra.fluorescence_extraction.extract_nuclear_cytoplasmic(
             intensity_images[i],
-            tracks[i],
+            extraction_tracks[i],
         )
 
         # Determine which keys are used for fluorescence data
