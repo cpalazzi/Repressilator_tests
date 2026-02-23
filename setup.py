@@ -30,6 +30,7 @@ setup(
         "scikit-image>=0.18.0",
         "pandas>=1.3.0",
         "pints>=0.5.0",
-        "pytest"
+        "pytest",
+        "PyQt5",
     ],
 )
