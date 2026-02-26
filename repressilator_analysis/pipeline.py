@@ -67,7 +67,9 @@ def full_analysis(
 
     # Track cells
     tracks_dict, labeled_images = fluorescence_extraction.track_cells_across_time(
-        phase_images, min_cell_area
+        phase_images,
+        min_cell_area,
+        intensity_images=intensity_images,
     )
 
     # Convert tracks to list format for test compatibility
